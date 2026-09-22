@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>小册子骑马钉拼版</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <h1>骑马钉小册子拼版</h1>
+    <p class="subtitle">每张纸 4 页 · 自动补空白页 · 自动适配混合尺寸与旋转页面</p>
+  </header>
+
+  <main>
+    <section class="card upload-card">
+      <label id="dropzone" class="dropzone" for="file-input">
+        <input type="file" id="file-input" accept="application/pdf,.pdf" hidden />
+        <span class="drop-icon">📄</span>
+        <span class="drop-text">点击选择 PDF，或将 PDF 拖拽到此处</span>
+        <span id="file-name" class="file-name"></span>
+      </label>
+
+      <div class="options">
+        <label class="option-check">
+          <input type="checkbox" id="signature-mode" />
+          <span>启用分册签帖模式（按纸张容量切分为多个骑马钉签帖）</span>
+        </label>
+        <label id="max-sheets-field" class="option-field" hidden>
+          <span>每帖最多纸张数：</span>
+          <input type="number" id="max-sheets" min="1" max="20" step="1" value="4" />
+          <span class="option-hint">1～20 张（每纸 4 页，即每帖 4～80 页；仅在每帖末尾补白）</span>
+        </label>
+      </div>
+
+      <button id="impose-btn" class="btn primary" disabled>开始拼版</button>
+      <p id="status" class="status" role="status"></p>
+    </section>
+
+    <section id="summary" class="card summary-card" hidden>
+      <h2>拼版结果</h2>
+      <ul id="summary-list" class="summary-list"></ul>
+      <div id="signature-summary" class="signature-summary" hidden></div>
+      <button id="download-btn" class="btn success">下载拼版 PDF</button>
+    </section>
+
+    <section id="preview" class="preview-section" hidden>
+      <h2>纸张预览（正面 / 背面）</h2>
+      <div class="legend">
+        <span class="legend-item"><span class="dot page"></span>原始页</span>
+        <span class="legend-item"><span class="dot blank"></span>补的空白页</span>
+      </div>
+      <p class="rule-hint">
+        折页方式：每张纸左右对折后骑马钉装订。正面左侧为大页码、右侧为小页码；
+        翻面后背面左右互换，逐张向内递进。
+      </p>
+      <div id="sheets" class="sheets"></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>小型印刷店拼版工具 · Node.js + Express + pdf-lib</span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
