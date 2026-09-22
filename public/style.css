@@ -8,6 +8,11 @@
   --ok: #16a34a;
   --ok-dark: #15803d;
   --danger: #dc2626;
+  --warn: #d97706;
+  --warn-bg: #fff7ed;
+  --info: #2563eb;
+  --info-bg: #eff6ff;
+  --error-bg: #fef2f2;
   --line: #d8dee4;
   --blank-bg: #eef1f4;
 }
@@ -89,12 +94,128 @@ main {
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn.primary { background: var(--brand); }
 .btn.primary:not(:disabled):hover { background: var(--brand-dark); }
+.btn.secondary { background: #475569; }
+.btn.secondary:not(:disabled):hover { background: #334155; }
 .btn.success { background: var(--ok); }
 .btn.success:hover { background: var(--ok-dark); }
+.btn.small {
+  width: auto;
+  margin-top: 0;
+  padding: 8px 14px;
+  font-size: 13px;
+  border-radius: 7px;
+}
+
+.actions { display: flex; gap: 10px; }
+.actions .btn { margin-top: 14px; }
 
 .status { margin: 12px 0 0; font-size: 14px; min-height: 20px; }
 .status.error { color: var(--danger); }
 .status.info { color: var(--brand-dark); }
+
+/* 印前校验报告 */
+.report-card h2 { margin: 0; font-size: 18px; }
+.report-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.report-overview {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: var(--ink);
+}
+.result-clean { color: var(--ok-dark); }
+.result-issues { color: var(--danger); }
+
+.report-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.filter-chip {
+  border: 1px solid var(--line);
+  background: #f8fafc;
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--ink);
+  transition: background 0.15s, border-color 0.15s;
+}
+.filter-chip .chip-count {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  font-size: 12px;
+  font-weight: 700;
+}
+.filter-chip.active { border-color: var(--brand); background: #eaf1fe; font-weight: 700; }
+.filter-chip.error.active { border-color: var(--danger); background: var(--error-bg); }
+.filter-chip.warning.active { border-color: var(--warn); background: var(--warn-bg); }
+.filter-chip.info.active { border-color: var(--info); background: var(--info-bg); }
+.filter-chip.error.active .chip-count { background: #fecaca; }
+.filter-chip.warning.active .chip-count { background: #fde68a; }
+.filter-chip.info.active .chip-count { background: #bfdbfe; }
+
+.report-issues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.issue-item {
+  border: 1px solid var(--line);
+  border-left-width: 5px;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+.issue-item.sev-error { border-left-color: var(--danger); background: var(--error-bg); }
+.issue-item.sev-warning { border-left-color: var(--warn); background: var(--warn-bg); }
+.issue-item.sev-info { border-left-color: var(--info); background: var(--info-bg); }
+.issue-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.issue-title { font-weight: 700; }
+.issue-range { margin-left: auto; color: var(--muted); font-size: 13px; }
+.sev-badge {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+.sev-badge.error { background: var(--danger); }
+.sev-badge.warning { background: var(--warn); }
+.sev-badge.info { background: var(--info); }
+.issue-detected {
+  margin-top: 6px;
+  color: #374151;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.issue-advice {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #4b5563;
+}
+.report-empty { margin: 0 0 10px; font-size: 14px; color: var(--ok-dark); font-weight: 600; }
+.report-note {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+}
 
 .options {
   margin-top: 14px;

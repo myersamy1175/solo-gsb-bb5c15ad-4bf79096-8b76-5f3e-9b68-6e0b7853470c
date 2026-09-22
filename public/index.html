@@ -33,8 +33,28 @@
         </label>
       </div>
 
-      <button id="impose-btn" class="btn primary" disabled>开始拼版</button>
+      <div class="actions">
+        <button id="preflight-btn" class="btn secondary" disabled>运行印前校验</button>
+        <button id="impose-btn" class="btn primary" disabled>开始拼版</button>
+      </div>
       <p id="status" class="status" role="status"></p>
+    </section>
+
+    <section id="preflight-report" class="card report-card" hidden>
+      <div class="report-head">
+        <h2>印前校验报告</h2>
+        <button id="preflight-download-btn" class="btn small success" type="button">下载 JSON 报告</button>
+      </div>
+      <p id="preflight-overview" class="report-overview"></p>
+      <div id="preflight-filters" class="report-filters" role="group" aria-label="按严重级别筛选">
+        <button type="button" class="filter-chip active" data-filter="all">全部 <span class="chip-count" data-count="all">0</span></button>
+        <button type="button" class="filter-chip error" data-filter="error">严重 <span class="chip-count" data-count="error">0</span></button>
+        <button type="button" class="filter-chip warning" data-filter="warning">警告 <span class="chip-count" data-count="warning">0</span></button>
+        <button type="button" class="filter-chip info" data-filter="info">提示 <span class="chip-count" data-count="info">0</span></button>
+      </div>
+      <ul id="preflight-issues" class="report-issues"></ul>
+      <p id="preflight-empty" class="report-empty" hidden>未发现印前问题，可直接拼版。</p>
+      <p class="report-note">校验结果仅供参考，<strong>不会阻断拼版</strong>；修复建议处理后可重新上传再次校验。</p>
     </section>
 
     <section id="summary" class="card summary-card" hidden>

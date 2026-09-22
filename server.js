@@ -4,13 +4,14 @@ const path = require('path');
 const express = require('express');
 const multer = require('multer');
 const { imposePdf, parseMaxSheetsPerSignature } = require('./lib/impose');
+const { preflightPdf } = require('./lib/preflight');
 
 const app = express();
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE_MB, 10) * 1024 * 1024
   || 50 * 1024 * 1024;
 
-// 上传文件仅保留在内存中（拼版后直接返回，不写磁盘）
+// 上传文件仅保留在内存中（校验/拼版后直接返回，不写磁盘）
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_SIZE },
@@ -22,19 +23,45 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * 校验上传字段：必须存在且为 PDF（以文件头魔数为准，兼容 octet-stream 上传）。
+ * 失败时返回错误响应并返回 null；成功时返回 multer 文件对象。
+ */
+function readUploadedPdf(req, res) {
+  if (!req.file) {
+    res.status(400).json({ error: '请通过字段 pdf 上传一个 PDF 文件' });
+    return null;
+  }
+  const isPdf = req.file.buffer.slice(0, 5).toString('latin1') === '%PDF-'
+    || (!req.file.mimetype || req.file.mimetype === 'application/octet-stream'
+      && /\.pdf$/i.test(req.file.originalname || ''));
+  if (!isPdf) {
+    res.status(400).json({ error: '仅支持 PDF 文件' });
+    return null;
+  }
+  return req.file;
+}
+
+// 印前校验接口：只检查并返回 JSON 报告，不生成拼版文件；
+// 报告中存在问题属于正常结果（HTTP 200），仅文件本身无法解析时才报错。
+app.post('/api/preflight', upload.single('pdf'), async (req, res) => {
+  try {
+    const file = readUploadedPdf(req, res);
+    if (!file) return;
+
+    const report = await preflightPdf(file.buffer, { fileName: file.originalname });
+    return res.json(report);
+  } catch (err) {
+    const message = err && err.message ? err.message : '校验失败';
+    return res.status(422).json({ error: `无法校验该 PDF：${message}` });
+  }
+});
+
 // 拼版接口：上传 PDF，返回拼版后的 PDF；拼版页序方案通过响应头回传
 app.post('/api/impose', upload.single('pdf'), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: '请通过字段 pdf 上传一个 PDF 文件' });
-    }
-    // 部分浏览器会以 application/octet-stream 上传，故以 PDF 文件头魔数为准
-    const isPdf = req.file.buffer.slice(0, 5).toString('latin1') === '%PDF-'
-      || (!req.file.mimetype || req.file.mimetype === 'application/octet-stream'
-        && /\.pdf$/i.test(req.file.originalname || ''));
-    if (!isPdf) {
-      return res.status(400).json({ error: '仅支持 PDF 文件' });
-    }
+    const file = readUploadedPdf(req, res);
+    if (!file) return;
 
     // 分册签帖模式：signatureMode=on 时启用；maxSheetsPerSignature 必须为 1～20 的整数
     const options = {};
@@ -47,7 +74,7 @@ app.post('/api/impose', upload.single('pdf'), async (req, res) => {
       }
     }
 
-    const { pdfBytes, plan } = await imposePdf(req.file.buffer, options);
+    const { pdfBytes, plan } = await imposePdf(file.buffer, options);
 
     // 页序方案为纯 ASCII JSON，放入自定义响应头供前端渲染预览
     res.setHeader('Content-Type', 'application/pdf');

@@ -4,6 +4,7 @@ const fileInput = document.getElementById('file-input');
 const dropzone = document.getElementById('dropzone');
 const fileName = document.getElementById('file-name');
 const imposeBtn = document.getElementById('impose-btn');
+const preflightBtn = document.getElementById('preflight-btn');
 const statusEl = document.getElementById('status');
 const summaryEl = document.getElementById('summary');
 const previewEl = document.getElementById('preview');
@@ -14,12 +15,21 @@ const maxSheetsField = document.getElementById('max-sheets-field');
 const maxSheetsInput = document.getElementById('max-sheets');
 const summaryListEl = document.getElementById('summary-list');
 const signatureSummaryEl = document.getElementById('signature-summary');
+const reportEl = document.getElementById('preflight-report');
+const reportOverviewEl = document.getElementById('preflight-overview');
+const reportIssuesEl = document.getElementById('preflight-issues');
+const reportEmptyEl = document.getElementById('preflight-empty');
+const reportDownloadBtn = document.getElementById('preflight-download-btn');
+const filterChips = document.querySelectorAll('#preflight-filters .filter-chip');
+const chipCounts = document.querySelectorAll('.chip-count');
 
 const MAX_SHEETS = 20;
 
 let selectedFile = null;
 let resultBlobUrl = null;
 let resultBaseName = 'booklet';
+let preflightReport = null;
+let preflightFilter = 'all';
 
 signatureModeInput.addEventListener('change', () => {
   maxSheetsField.hidden = !signatureModeInput.checked;
@@ -61,6 +71,16 @@ function clearResult() {
   signatureSummaryEl.innerHTML = '';
 }
 
+function clearReport() {
+  preflightReport = null;
+  preflightFilter = 'all';
+  reportEl.hidden = true;
+  reportIssuesEl.innerHTML = '';
+  reportOverviewEl.textContent = '';
+  reportEmptyEl.hidden = true;
+  setActiveFilterChip('all');
+}
+
 fileInput.addEventListener('change', () => {
   const file = fileInput.files && fileInput.files[0];
   selectFile(file);
@@ -85,10 +105,12 @@ dropzone.addEventListener('drop', (e) => {
 
 function selectFile(file) {
   clearResult();
+  clearReport();
   if (!file) {
     selectedFile = null;
     fileName.textContent = '';
     imposeBtn.disabled = true;
+    preflightBtn.disabled = true;
     return;
   }
   if (file.type && file.type !== 'application/pdf') {
@@ -99,7 +121,8 @@ function selectFile(file) {
   fileName.textContent = file.name;
   resultBaseName = (file.name || 'booklet').replace(/\.pdf$/i, '');
   imposeBtn.disabled = false;
-  setStatus(`已选择：${file.name}（${(file.size / 1024 / 1024).toFixed(2)} MB）`, 'info');
+  preflightBtn.disabled = false;
+  setStatus(`已选择：${file.name}（${(file.size / 1024 / 1024).toFixed(2)} MB），可先运行印前校验或直接拼版。`, 'info');
 }
 
 imposeBtn.addEventListener('click', async () => {
@@ -161,6 +184,234 @@ downloadBtn.addEventListener('click', () => {
   a.click();
   a.remove();
 });
+
+// ---------- 印前校验 ----------
+
+preflightBtn.addEventListener('click', async () => {
+  if (!selectedFile) return;
+  preflightBtn.disabled = true;
+  setStatus('正在执行印前校验，请稍候…', 'info');
+
+  const form = new FormData();
+  form.append('pdf', selectedFile);
+
+  try {
+    const resp = await fetch('/api/preflight', { method: 'POST', body: form });
+    if (!resp.ok) {
+      let message = `校验失败（HTTP ${resp.status}）`;
+      try {
+        const data = await resp.json();
+        if (data && data.error) message = data.error;
+      } catch (_) { /* 非 JSON 错误响应，使用默认提示 */ }
+      throw new Error(message);
+    }
+    const report = await resp.json();
+    preflightReport = report;
+    preflightFilter = 'all';
+    renderPreflightReport(report);
+    const s = report.summary;
+    if (s.status === 'clean') {
+      setStatus('印前校验完成：未发现问题，可直接拼版。', 'info');
+    } else {
+      setStatus(
+        `印前校验完成：${s.errorCount} 个严重、${s.warningCount} 个警告、${s.infoCount} 个提示（不影响拼版）。`,
+        s.errorCount > 0 ? 'error' : 'info',
+      );
+    }
+  } catch (err) {
+    setStatus(err.message || '印前校验失败', 'error');
+  } finally {
+    preflightBtn.disabled = false;
+  }
+});
+
+filterChips.forEach((chip) => {
+  chip.addEventListener('click', () => {
+    preflightFilter = chip.dataset.filter;
+    setActiveFilterChip(preflightFilter);
+    if (preflightReport) renderPreflightIssues(preflightReport);
+  });
+});
+
+function setActiveFilterChip(filter) {
+  filterChips.forEach((chip) => {
+    chip.classList.toggle('active', chip.dataset.filter === filter);
+  });
+}
+
+reportDownloadBtn.addEventListener('click', () => {
+  if (!preflightReport) return;
+  const blob = new Blob([JSON.stringify(preflightReport, null, 2)], {
+    type: 'application/json;charset=utf-8',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${resultBaseName}-印前校验.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+});
+
+const SEVERITY_LABELS = { error: '严重', warning: '警告', info: '提示' };
+const REASON_LABELS = {
+  'image-only': '整页为图片（扫描件），无文本绘制操作',
+  'no-text-operators': '内容流中没有任何文本绘制操作（可能为转曲文字）',
+};
+
+function formatSize(size) {
+  return `${size.width.toFixed(1)} × ${size.height.toFixed(1)} pt`
+    + `（约 ${ptToMm(size.width)} × ${ptToMm(size.height)} mm）`;
+}
+
+function rangeLabel(segment) {
+  return segment.startPage === segment.endPage
+    ? `第 ${segment.startPage} 页`
+    : `第 ${segment.startPage} ～ ${segment.endPage} 页`;
+}
+
+function renderPreflightReport(report) {
+  const s = report.summary;
+  const ref = report.reference;
+
+  chipCounts.forEach((el) => {
+    const key = el.dataset.count;
+    if (key === 'all') el.textContent = s.issuesCount;
+    else el.textContent = s[key === 'error' ? 'errorCount'
+      : key === 'warning' ? 'warningCount' : 'infoCount'];
+  });
+
+  const orientation = ORIENTATION_LABELS[ref.orientation] || ref.orientation;
+  reportOverviewEl.innerHTML = '';
+  const overview = document.createElement('span');
+  overview.textContent = `共 ${s.pageCount} 页；多数页（参考尺寸）为 ${formatSize(ref)}，${orientation}。`;
+  reportOverviewEl.appendChild(overview);
+  const resultLine = document.createElement('strong');
+  resultLine.className = s.status === 'clean' ? 'result-clean' : 'result-issues';
+  resultLine.textContent = s.status === 'clean'
+    ? '未发现问题。'
+    : `发现 ${s.segmentCount} 组、共 ${s.issuesCount} 页次问题`
+      + `（严重 ${s.errorCount} / 警告 ${s.warningCount} / 提示 ${s.infoCount}）。`;
+  reportOverviewEl.appendChild(document.createElement('br'));
+  reportOverviewEl.appendChild(resultLine);
+
+  setActiveFilterChip(preflightFilter);
+  renderPreflightIssues(report);
+  reportEl.hidden = false;
+}
+
+function renderPreflightIssues(report) {
+  reportIssuesEl.innerHTML = '';
+  const segments = report.segments.filter((seg) => preflightFilter === 'all'
+    || seg.severity === preflightFilter);
+
+  reportEmptyEl.hidden = segments.length !== 0;
+  reportEmptyEl.textContent = report.segments.length === 0
+    ? '未发现印前问题，可直接拼版。'
+    : '当前级别筛选下没有问题。';
+
+  const adviceByCode = new Map(report.checks.map((c) => [c.code, c]));
+
+  for (const segment of segments) {
+    const meta = adviceByCode.get(segment.code);
+    const li = document.createElement('li');
+    li.className = `issue-item sev-${segment.severity}`;
+
+    const head = document.createElement('div');
+    head.className = 'issue-head';
+    const badge = document.createElement('span');
+    badge.className = `sev-badge ${segment.severity}`;
+    badge.textContent = SEVERITY_LABELS[segment.severity] || segment.severity;
+    const title = document.createElement('span');
+    title.className = 'issue-title';
+    title.textContent = meta ? meta.label : segment.code;
+    const range = document.createElement('span');
+    range.className = 'issue-range';
+    range.textContent = `${rangeLabel(segment)} · ${segment.pageCount} 页`;
+    head.append(badge, title, range);
+    li.appendChild(head);
+
+    const detected = document.createElement('div');
+    detected.className = 'issue-detected';
+    detected.appendChild(buildDetectedDetail(segment));
+    li.appendChild(detected);
+
+    if (meta && meta.advice) {
+      const advice = document.createElement('div');
+      advice.className = 'issue-advice';
+      advice.textContent = `修复建议：${meta.advice}`;
+      li.appendChild(advice);
+    }
+    reportIssuesEl.appendChild(li);
+  }
+}
+
+function buildDetectedDetail(segment) {
+  const frag = document.createDocumentFragment();
+  switch (segment.code) {
+    case 'size-mismatch': {
+      // 相邻页实际尺寸可能各不相同：按检测值再归组展示
+      const groups = new Map();
+      for (const p of segment.pages) {
+        const key = `${p.actual.width}x${p.actual.height}`;
+        if (!groups.has(key)) {
+          groups.set(key, { actual: p.actual, pages: [] });
+        }
+        groups.get(key).pages.push(p.page);
+      }
+      const expected = segment.pages[0].expected;
+      const line = document.createElement('div');
+      line.textContent = `参考尺寸：${formatSize(expected)}`;
+      frag.appendChild(line);
+      for (const group of groups.values()) {
+        const g = document.createElement('div');
+        const pagesLabel = group.pages.length === 1
+          ? `第 ${group.pages[0]} 页`
+          : `第 ${group.pages[0]} ～ ${group.pages[group.pages.length - 1]} 页（共 ${group.pages.length} 页）`;
+        g.textContent = `${pagesLabel}：${formatSize(group.actual)}`;
+        frag.appendChild(g);
+      }
+      break;
+    }
+    case 'rotation': {
+      const line = document.createElement('div');
+      const angles = [...new Set(segment.pages.map((p) => p.rotation))];
+      line.textContent = angles.length === 1
+        ? `检测到：顺时针旋转 ${angles[0]}°（区段内 ${segment.pageCount} 页一致）`
+        : `检测到：旋转角 ${angles.join('° / ')}°（区段内角度不一致，见 JSON 报告逐页数据）`;
+      frag.appendChild(line);
+      break;
+    }
+    case 'transparency': {
+      const sourceSet = new Set();
+      for (const p of segment.pages) {
+        for (const label of (p.sourceLabels || [])) sourceSet.add(label);
+      }
+      for (const label of sourceSet) {
+        const line = document.createElement('div');
+        line.textContent = `检测到：${label}`;
+        frag.appendChild(line);
+      }
+      break;
+    }
+    case 'no-extractable-text': {
+      const reasons = new Set(segment.pages.map((p) => REASON_LABELS[p.reason] || p.reason));
+      for (const reason of reasons) {
+        const line = document.createElement('div');
+        line.textContent = `检测到：${reason}`;
+        frag.appendChild(line);
+      }
+      break;
+    }
+    default: {
+      const line = document.createElement('div');
+      line.textContent = '详见 JSON 报告中的逐页数据。';
+      frag.appendChild(line);
+    }
+  }
+  return frag;
+}
 
 const ORIENTATION_LABELS = {
   portrait: '竖版',
