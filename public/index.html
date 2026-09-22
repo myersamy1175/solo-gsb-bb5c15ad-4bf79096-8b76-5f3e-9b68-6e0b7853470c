@@ -33,8 +33,47 @@
         </label>
       </div>
 
-      <button id="impose-btn" class="btn primary" disabled>开始拼版</button>
+      <div class="btn-row">
+        <button id="preflight-btn" class="btn secondary" disabled>运行印前校验</button>
+        <button id="impose-btn" class="btn primary" disabled>开始拼版</button>
+      </div>
       <p id="status" class="status" role="status"></p>
+      <p class="preflight-hint">
+        印前校验只检查不拼版：逐页核对页面尺寸、旋转角、透明度与可提取文字；
+        校验结果不会阻止后续拼版。
+      </p>
+    </section>
+
+    <section id="report" class="card report-card" hidden>
+      <div class="report-head">
+        <h2>印前校验报告</h2>
+        <button id="report-download-btn" class="btn small success" type="button">下载 JSON 报告</button>
+      </div>
+      <p id="report-verdict" class="report-verdict"></p>
+      <div id="report-summary" class="report-summary"></div>
+      <div class="report-filters" role="group" aria-label="按级别筛选">
+        <button type="button" class="filter-chip active" data-level="all">全部 <span class="chip-count" data-count="all">0</span></button>
+        <button type="button" class="filter-chip" data-level="error">错误 <span class="chip-count" data-count="error">0</span></button>
+        <button type="button" class="filter-chip" data-level="warning">警告 <span class="chip-count" data-count="warning">0</span></button>
+        <button type="button" class="filter-chip" data-level="info">提示 <span class="chip-count" data-count="info">0</span></button>
+      </div>
+      <p id="report-empty" class="report-empty" hidden>未发现印前问题，可以直接拼版。</p>
+      <ul id="issue-list" class="issue-list"></ul>
+
+      <details class="page-details">
+        <summary>逐页检测明细（<span id="page-detail-count">0</span> 页）</summary>
+        <div class="table-wrap">
+          <table class="page-table">
+            <thead>
+              <tr>
+                <th>页码</th><th>页面尺寸（有效 / 旋转后）</th><th>旋转角</th>
+                <th>透明度</th><th>可提取文字</th><th>问题</th>
+              </tr>
+            </thead>
+            <tbody id="page-table-body"></tbody>
+          </table>
+        </div>
+      </details>
     </section>
 
     <section id="summary" class="card summary-card" hidden>

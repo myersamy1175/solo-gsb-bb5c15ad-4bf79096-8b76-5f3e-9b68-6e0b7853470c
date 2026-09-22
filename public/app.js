@@ -4,6 +4,7 @@ const fileInput = document.getElementById('file-input');
 const dropzone = document.getElementById('dropzone');
 const fileName = document.getElementById('file-name');
 const imposeBtn = document.getElementById('impose-btn');
+const preflightBtn = document.getElementById('preflight-btn');
 const statusEl = document.getElementById('status');
 const summaryEl = document.getElementById('summary');
 const previewEl = document.getElementById('preview');
@@ -15,11 +16,24 @@ const maxSheetsInput = document.getElementById('max-sheets');
 const summaryListEl = document.getElementById('summary-list');
 const signatureSummaryEl = document.getElementById('signature-summary');
 
+const reportEl = document.getElementById('report');
+const reportVerdictEl = document.getElementById('report-verdict');
+const reportSummaryEl = document.getElementById('report-summary');
+const issueListEl = document.getElementById('issue-list');
+const reportEmptyEl = document.getElementById('report-empty');
+const reportDownloadBtn = document.getElementById('report-download-btn');
+const pageTableBody = document.getElementById('page-table-body');
+const pageDetailCount = document.getElementById('page-detail-count');
+const filterChips = document.querySelectorAll('.filter-chip');
+const filterCountEls = document.querySelectorAll('.chip-count');
+
 const MAX_SHEETS = 20;
 
 let selectedFile = null;
 let resultBlobUrl = null;
 let resultBaseName = 'booklet';
+let preflightReport = null;
+let activeLevelFilter = 'all';
 
 signatureModeInput.addEventListener('change', () => {
   maxSheetsField.hidden = !signatureModeInput.checked;
@@ -61,6 +75,242 @@ function clearResult() {
   signatureSummaryEl.innerHTML = '';
 }
 
+/**
+ * 重新选择文件时清空上一份校验报告；报告 JSON 通过 Blob 下载。
+ */
+function clearReport() {
+  preflightReport = null;
+  reportEl.hidden = true;
+  issueListEl.innerHTML = '';
+  pageTableBody.innerHTML = '';
+  reportSummaryEl.innerHTML = '';
+  reportVerdictEl.textContent = '';
+  activeLevelFilter = 'all';
+  updateFilterChips();
+}
+
+function selectFile(file) {
+  clearResult();
+  clearReport();
+  if (!file) {
+    selectedFile = null;
+    fileName.textContent = '';
+    imposeBtn.disabled = true;
+    preflightBtn.disabled = true;
+    return;
+  }
+  if (file.type && file.type !== 'application/pdf') {
+    setStatus('请选择 PDF 文件', 'error');
+    return;
+  }
+  selectedFile = file;
+  fileName.textContent = file.name;
+  resultBaseName = (file.name || 'booklet').replace(/\.pdf$/i, '');
+  imposeBtn.disabled = false;
+  preflightBtn.disabled = false;
+  setStatus(`已选择：${file.name}（${(file.size / 1024 / 1024).toFixed(2)} MB）`, 'info');
+}
+
+// ---------- 印前校验 ----------
+
+const SEVERITY_LABELS = { error: '错误', warning: '警告', info: '提示' };
+
+function formatRange(issue) {
+  if (issue.pageFrom === null || issue.pageTo === null) return '整篇文档';
+  return issue.pageFrom === issue.pageTo
+    ? `第 ${issue.pageFrom} 页`
+    : `第 ${issue.pageFrom}～${issue.pageTo} 页`;
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+preflightBtn.addEventListener('click', async () => {
+  if (!selectedFile) return;
+  preflightBtn.disabled = true;
+  imposeBtn.disabled = true;
+  setStatus('正在执行印前校验，不会生成拼版文件…', 'info');
+
+  const form = new FormData();
+  form.append('pdf', selectedFile);
+
+  try {
+    const resp = await fetch('/api/preflight', { method: 'POST', body: form });
+    if (!resp.ok) {
+      let message = `校验失败（HTTP ${resp.status}）`;
+      try {
+        const data = await resp.json();
+        if (data && data.error) message = data.error;
+      } catch (_) { /* 非 JSON 错误响应，使用默认提示 */ }
+      throw new Error(message);
+    }
+    preflightReport = await resp.json();
+    renderReport(preflightReport);
+    const { summary } = preflightReport;
+    if (summary.error > 0) {
+      setStatus(`校验完成：发现 ${summary.error} 个错误、${summary.warning} 个警告、`
+        + `${summary.info} 个提示。仍可继续拼版，请先评估错误项。`, 'error');
+    } else if (summary.warning > 0 || summary.info > 0) {
+      setStatus(`校验完成：${summary.warning} 个警告、${summary.info} 个提示，不影响继续拼版。`, 'info');
+    } else {
+      setStatus('校验完成：未发现印前问题，可以直接拼版。', 'info');
+    }
+  } catch (err) {
+    setStatus(err.message || '印前校验失败', 'error');
+  } finally {
+    preflightBtn.disabled = false;
+    imposeBtn.disabled = false;
+  }
+});
+
+function renderReport(report) {
+  reportEl.hidden = false;
+
+  const { summary, referenceSize } = report;
+  reportVerdictEl.className = `report-verdict ${summary.passed ? 'ok' : 'bad'}`;
+  reportVerdictEl.textContent = summary.passed
+    ? `结论：未发现错误级问题（${report.pageCount} 页；主尺寸 ${referenceSize.widthMm} × `
+      + `${referenceSize.heightMm} mm）。警告/提示可选择性处理，拼版不受阻断。`
+    : `结论：发现 ${summary.error} 个错误级问题（${report.pageCount} 页；主尺寸 `
+      + `${referenceSize.widthMm} × ${referenceSize.heightMm} mm）。建议修复后再印刷，`
+      + '但仍可继续拼版。';
+
+  renderReportSummary(summary);
+  renderIssueList(report.issues);
+  renderPageTable(report.pages);
+
+  filterCountEls.forEach((el) => {
+    const level = el.dataset.count;
+    el.textContent = level === 'all' ? report.issues.length : summary[level];
+  });
+}
+
+function renderReportSummary(summary) {
+  reportSummaryEl.innerHTML = '';
+  const cards = [
+    { level: 'error', label: '错误', count: summary.error },
+    { level: 'warning', label: '警告', count: summary.warning },
+    { level: 'info', label: '提示', count: summary.info },
+    { level: 'pages', label: '涉及页面', count: summary.pagesWithIssues },
+  ];
+  for (const card of cards) {
+    const div = document.createElement('div');
+    div.className = `report-stat ${card.level}`;
+    div.innerHTML = `<span class="stat-num">${card.count}</span>`
+      + `<span class="stat-label">${card.label}</span>`;
+    reportSummaryEl.appendChild(div);
+  }
+}
+
+function updateFilterChips() {
+  filterChips.forEach((chip) => {
+    chip.classList.toggle('active', chip.dataset.level === activeLevelFilter);
+  });
+}
+
+filterChips.forEach((chip) => {
+  chip.addEventListener('click', () => {
+    activeLevelFilter = chip.dataset.level;
+    updateFilterChips();
+    if (preflightReport) renderIssueList(preflightReport.issues);
+  });
+});
+
+function renderIssueList(issues) {
+  issueListEl.innerHTML = '';
+  const visible = activeLevelFilter === 'all'
+    ? issues
+    : issues.filter((issue) => issue.severity === activeLevelFilter);
+
+  reportEmptyEl.hidden = visible.length !== 0;
+
+  for (const issue of visible) {
+    const li = document.createElement('li');
+    li.className = `issue ${issue.severity}`;
+
+    const head = document.createElement('div');
+    head.className = 'issue-head';
+    const badge = document.createElement('span');
+    badge.className = `severity-badge ${issue.severity}`;
+    badge.textContent = SEVERITY_LABELS[issue.severity];
+    const title = document.createElement('span');
+    title.className = 'issue-title';
+    title.textContent = issue.title;
+    const range = document.createElement('span');
+    range.className = 'issue-range';
+    range.textContent = formatRange(issue)
+      + (issue.pageCount > 1 ? `（连续 ${issue.pageCount} 页）` : '');
+    head.append(badge, title, range);
+    li.appendChild(head);
+
+    const message = document.createElement('p');
+    message.className = 'issue-message';
+    message.textContent = issue.message;
+    li.appendChild(message);
+
+    if (issue.values && issue.values.length) {
+      const dl = document.createElement('dl');
+      dl.className = 'issue-values';
+      for (const value of issue.values) {
+        const dt = document.createElement('dt');
+        dt.textContent = value.label;
+        const dd = document.createElement('dd');
+        dd.textContent = value.value;
+        dl.append(dt, dd);
+      }
+      li.appendChild(dl);
+    }
+
+    const advice = document.createElement('p');
+    advice.className = 'issue-advice';
+    advice.innerHTML = `<strong>修复建议：</strong>${escapeHtml(issue.advice)}`;
+    li.appendChild(advice);
+
+    issueListEl.appendChild(li);
+  }
+}
+
+function renderPageTable(pages) {
+  pageTableBody.innerHTML = '';
+  pageDetailCount.textContent = String(pages.length);
+  const frag = document.createDocumentFragment();
+  for (const p of pages) {
+    const tr = document.createElement('tr');
+    tr.className = p.issues.length ? 'has-issue' : 'clean';
+    const issueText = p.issues.length
+      ? p.issues.map((i) => SEVERITY_LABELS[i.severity] + '·' + i.title).join('；')
+      : '—';
+    tr.innerHTML = `<td>第 ${p.page} 页</td>`
+      + `<td>${p.effectiveWidth.toFixed(1)} × ${p.effectiveHeight.toFixed(1)} pt`
+      + `（${p.widthMm} × ${p.heightMm} mm）</td>`
+      + `<td>${p.rotation}°</td>`
+      + `<td>${p.transparent ? '是' : '否'}</td>`
+      + `<td>${p.textExtractable === null ? '无法判定' : (p.textExtractable ? '可提取' : '不可提取')}</td>`
+      + `<td class="page-issues">${escapeHtml(issueText)}</td>`;
+    frag.appendChild(tr);
+  }
+  pageTableBody.appendChild(frag);
+}
+
+reportDownloadBtn.addEventListener('click', () => {
+  if (!preflightReport) return;
+  const json = JSON.stringify(preflightReport, null, 2);
+  const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${resultBaseName}-印前校验报告.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
 fileInput.addEventListener('change', () => {
   const file = fileInput.files && fileInput.files[0];
   selectFile(file);
@@ -82,25 +332,6 @@ dropzone.addEventListener('drop', (e) => {
   const file = e.dataTransfer.files && e.dataTransfer.files[0];
   selectFile(file);
 });
-
-function selectFile(file) {
-  clearResult();
-  if (!file) {
-    selectedFile = null;
-    fileName.textContent = '';
-    imposeBtn.disabled = true;
-    return;
-  }
-  if (file.type && file.type !== 'application/pdf') {
-    setStatus('请选择 PDF 文件', 'error');
-    return;
-  }
-  selectedFile = file;
-  fileName.textContent = file.name;
-  resultBaseName = (file.name || 'booklet').replace(/\.pdf$/i, '');
-  imposeBtn.disabled = false;
-  setStatus(`已选择：${file.name}（${(file.size / 1024 / 1024).toFixed(2)} MB）`, 'info');
-}
 
 imposeBtn.addEventListener('click', async () => {
   if (!selectedFile) return;
